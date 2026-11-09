@@ -12,14 +12,13 @@ const rl = readline.createInterface({
 
 const askQuestion = (query) => new Promise((resolve) => rl.question(query, resolve));
 
-// socks5h forces DNS resolution to happen on the US Proxy server, NOT Singapore!
 const PROXY_URL = 'socks5://proxyuser:Apatiyoo@54.226.65.96:1080';
 
 async function runWorkflow() {
     console.log("[*] Creating local proxy tunnel...");
     const anonymizedProxyUrl = await proxyChain.anonymizeProxy(PROXY_URL);
 
-    console.log("[*] Launching browser with strict US config...");
+    console.log("[*] Launching browser with strict US config & WebRTC shields...");
     const browser = await puppeteer.launch({
         headless: "new",
         args: [
@@ -30,9 +29,9 @@ async function runWorkflow() {
             '--window-size=1280,800',
             '--lang=en-US',
             `--proxy-server=${anonymizedProxyUrl}`,
-            '--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1',
             '--webrtc-ip-handling-policy=disable_non_proxied_udp',
-            '--force-webrtc-ip-handling-policy'
+            '--force-webrtc-ip-handling-policy',
+            '--disable-features=WebRtcHideLocalIpsWithMdns,Ipv6'
         ],
         env: {
             ...process.env,
@@ -52,14 +51,26 @@ async function runWorkflow() {
 
     await page.emulateTimezone('America/New_York');
 
-    // Force US locale on all frames
+    // CDP Overrides for Timezone & Locale across all frames
     const client = await page.target().createCDPSession();
     await client.send('Emulation.setTimezoneOverride', { timezoneId: 'America/New_York' });
     await client.send('Emulation.setLocaleOverride', { locale: 'en-US' });
 
-    console.log("[*] Navigating directly to muse.ai/#weblink...");
+    // Block WebRTC leak completely in JS context
+    await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'language', { get: () => 'en-US' });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+
+        window.RTCPeerConnection = undefined;
+        window.webkitRTCPeerConnection = undefined;
+        if (navigator.mediaDevices) {
+            navigator.mediaDevices.getUserMedia = undefined;
+        }
+    });
+
+    console.log("[*] Navigating to muse.ai/#weblink...");
     await page.goto('https://muse.ai/#weblink', { waitUntil: 'networkidle2', timeout: 60000 });
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 4000));
 
     let emailInput = null;
     let targetFrame = page;
@@ -83,7 +94,6 @@ async function runWorkflow() {
         return;
     }
 
-    console.log("\n[!] IMPORTANT: Use a fresh alias like nimsarahhnaviduhj+us5@gmail.com !");
     const targetEmail = await askQuestion("[?] Enter Gmail address: ");
     await emailInput.type(targetEmail.trim(), { delay: 100 });
     await page.keyboard.press('Enter');
@@ -105,8 +115,14 @@ async function runWorkflow() {
     console.log("[*] Clicking Confirm button...");
     await page.keyboard.press('Enter');
 
-    console.log("[*] Waiting for Birthday screen...");
-    await new Promise(r => setTimeout(r, 6000));
+    console.log("[*] Waiting for response & page rendering (12s)...");
+    await new Promise(r => setTimeout(r, 12000));
+
+    console.log(`[*] Current Page URL: ${page.url()}`);
+    for (const f of page.frames()) {
+        console.log(`[*] Frame URL: ${f.url()}`);
+    }
+
     await page.screenshot({ path: 'debug_birthday_screen.png' });
     console.log("[*] Saved debug_birthday_screen.png!");
 
