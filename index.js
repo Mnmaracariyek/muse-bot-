@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const proxyChain = require('proxy-chain');
 const readline = require('readline');
 
 puppeteer.use(StealthPlugin());
@@ -11,13 +12,14 @@ const rl = readline.createInterface({
 
 const askQuestion = (query) => new Promise((resolve) => rl.question(query, resolve));
 
-const PROXY_HOST = '54.226.65.96';
-const PROXY_PORT = '1080';
-const PROXY_USER = 'proxyuser';
-const PROXY_PASS = 'Apatiyoo';
+const PROXY_URL = 'socks5://proxyuser:Apatiyoo@54.226.65.96:1080';
 
 async function runWorkflow() {
-    console.log("[*] Launching browser with US SOCKS5 Proxy & America/New_York timezone...");
+    console.log("[*] Creating local proxy tunnel via proxy-chain...");
+    const anonymizedProxyUrl = await proxyChain.anonymizeProxy(PROXY_URL);
+    console.log(`[*] Local tunnel ready at: ${anonymizedProxyUrl}`);
+
+    console.log("[*] Launching browser with US Proxy & America/New_York timezone...");
     const browser = await puppeteer.launch({
         headless: "new",
         args: [
@@ -30,7 +32,7 @@ async function runWorkflow() {
             '--disable-gpu',
             '--window-size=1280,800',
             '--lang=en-US,en',
-            `--proxy-server=socks5://${PROXY_HOST}:${PROXY_PORT}`
+            `--proxy-server=${anonymizedProxyUrl}`
         ],
         env: {
             ...process.env,
@@ -45,19 +47,13 @@ async function runWorkflow() {
     // Emulate New York Timezone directly via CDP session
     await page.emulateTimezone('America/New_York');
 
-    // Authenticate Proxy
-    await page.authenticate({
-        username: PROXY_USER,
-        password: PROXY_PASS
-    });
-
     console.log("[*] Checking IP and timezone through proxy...");
     try {
         await page.goto('https://ipinfo.io/json', { waitUntil: 'networkidle2', timeout: 30000 });
         const ipInfo = await page.evaluate(() => document.body.innerText);
         console.log("[*] IP Check Response:\n", ipInfo);
     } catch (e) {
-        console.log("[-] Warning: Failed to check ipinfo, proceeding anyway...");
+        console.log("[-] Warning: Failed to check ipinfo:", e.message);
     }
 
     console.log("[*] Navigating to muse.ai/#weblink...");
@@ -82,6 +78,7 @@ async function runWorkflow() {
         console.log("[-] Could not find email input. Taking debug screenshot...");
         await page.screenshot({ path: 'debug_proxy_error.png' });
         await browser.close();
+        await proxyChain.closeAnonymizedProxy(anonymizedProxyUrl, true);
         rl.close();
         return;
     }
@@ -117,6 +114,7 @@ async function runWorkflow() {
 
     await askQuestion("[?] Press Enter after checking debug_birthday_screen to exit...");
     await browser.close();
+    await proxyChain.closeAnonymizedProxy(anonymizedProxyUrl, true);
     rl.close();
 }
 
